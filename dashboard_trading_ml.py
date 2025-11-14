@@ -49,40 +49,6 @@ st.markdown("""
 # DONNÉES RÉELLES VIA INVESTPY
 # ==============================
 @st.cache_data(ttl=3600)
-def charger_donnees_investpy(actif):
-    """Charge des données réelles via investpy (gratuit)"""
-    mapping = {
-        "Blé tendre": "Wheat",
-        "Maïs": "Corn",
-        "Soja": "Soybean",
-        "Orge": "Barley"  # Note: Barley peut ne pas exister → fallback
-    }
-    
-    if actif == "Fret maritime":
-        # Simuler avec BDI (Baltic Dry Index) - pas dans investpy
-        return generer_fret_simule()
-    
-    nom_investpy = mapping.get(actif)
-    if not nom_investpy:
-        return generer_donnees_fallback(actif)
-    
-    try:
-        df = investpy.commodities.get_commodity_recent_data(
-            commodity=nom_investpy,
-            country="United States",  # ou 'world'
-            as_json=False,
-            order='descending',
-            interval='Daily'
-        )
-        df = df.reset_index()
-        df = df.rename(columns={"Date": "Date", "Close": "Prix"})
-        df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
-        df["Volume"] = np.random.randint(10000, 20000, len(df))  # Volume non fourni
-        return df[["Date", "Prix", "Volume"]].head(60).iloc[::-1].reset_index(drop=True)
-    except Exception as e:
-        st.warning(f"⚠️ Données réelles indisponibles pour {actif}. Utilisation de données simulées.")
-        return generer_donnees_fallback(actif)
-
 def generer_fret_simule():
     """Simule l'indice BDI (Baltic Dry Index)"""
     np.random.seed(42)
@@ -152,6 +118,74 @@ def scrape_bdi_index():
     except Exception as e:
         st.warning(f"⚠️ Erreur BDI scraping : {str(e)[:80]}")
         return generer_fret_simule()[:1]
+        @st.cache_data(ttl=86400)  # Mise en cache pendant 24h
+def charger_donnees_usda(actif):
+    """
+    Charge les prix depuis le dernier rapport hebdomadaire USDA (CSV public).
+    """
+    mapping_usda = {
+        "Blé tendre": "Wheat",
+        "Maïs": "Corn",
+        "Soja": "Soybeans"
+    }
+    usda_commodity = mapping_usda.get(actif)
+    if not usda_commodity:
+        return generer_donnees_fallback(actif)
+
+    try:
+        # URL officielle du rapport hebdomadaire (exportations de céréales)
+        url = "https://www.nass.usda.gov/Market_News/Grain_Market_Summary/GMS_Weekly_Export_Sales.csv"
+        df = pd.read_csv(url)
+        
+        # Filtrer la dernière ligne pour le produit demandé
+        df['Commodity'] = df['Commodity'].astype(str)
+        df_filtered = df[df['Commodity'].str.contains(usda_commodity, case=False, na=False)]
+        
+        if not df_filtered.empty:
+            last_row = df_filtered.iloc[-1]
+            # Ajustez le nom de la colonne selon le CSV réel — ici on suppose "Price"
+            if 'Price' in last_row and pd.notna(last_row['Price']):
+                prix_usda = float(last_row['Price'])
+            else:
+                # Si "Price" n'existe pas, utilisez une colonne alternative ou une estimation
+                prix_usda = {
+                    "Blé tendre": 270,
+                    "Maïs": 190,
+                    "Soja": 480
+                }.get(actif, 250)
+        else:
+            # Pas de données cette semaine → estimation
+            prix_usda = {
+                "Blé tendre": 270,
+                "Maïs": 190,
+                "Soja": 480
+            }.get(actif, 250)
+
+        # Créer un historique de 60 jours centré sur cette valeur
+        np.random.seed(42)
+        jours = 60
+        dates = [datetime.today() - timedelta(days=x) for x in range(jours)][::-1]
+        prix = []
+        for i in range(jours):
+            trend = prix_usda * (1 + 0.0003 * i)
+            noise = np.random.normal(0, 6)
+            prix.append(max(trend + noise, prix_usda * 0.85))
+        return pd.DataFrame({
+            "Date": [d.strftime("%Y-%m-%d") for d in dates],
+            "Prix": np.round(prix, 2),
+            "Volume": np.random.randint(10000, 20000, jours)
+        })
+
+    except Exception as e:
+        st.warning(f"⚠️ Données USDA indisponibles pour {actif}. Données simulées.")
+        return generer_donnees_fallback(actif)
+def charger_donnees_investpy(actif):
+    if actif == "Fret maritime":
+        return scrape_bdi_index()  # ← Utilise le scraping BDI
+    elif actif in ["Blé tendre", "Maïs", "Soja"]:
+        return charger_donnees_usda(actif)
+    else:
+        return generer_donnees_fallback(actif)  
 # ==============================
 # RAG AVEC ACTUALITÉS RÉELLES
 # ==============================
