@@ -120,7 +120,38 @@ def generer_donnees_fallback(actif):
         "Prix": np.round(prix, 2),
         "Volume": np.random.randint(8000, 18000, jours)
     })
-
+def scrape_bdi_index():
+    """
+    Récupère le dernier indice BDI (Baltic Dry Index) depuis le site officiel.
+    Retourne un DataFrame avec date et valeur.
+    """
+    try:
+        url = "https://www.balticexchange.com/en/market-data/main-indices/dry.html"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+        
+        # Recherche de la valeur dans la structure HTML actuelle (2025)
+        # La BDI est souvent dans une table ou un span avec classe contenant 'bdi'
+        bdi_element = soup.find("td", string="BDI")  # ou chercher par valeur numérique
+        if bdi_element:
+            value_cell = bdi_element.find_next("td")
+            if value_cell:
+                bdi_value = float(value_cell.text.replace(",", ""))
+                date_today = datetime.today().strftime("%Y-%m-%d")
+                return pd.DataFrame({
+                    "Date": [date_today],
+                    "Prix": [bdi_value],
+                    "Volume": [0]  # Volume symbolique
+                })
+        
+        # Fallback : si le scraping échoue, utiliser une valeur réaliste
+        st.warning("⚠️ Impossible de scraper le BDI en temps réel. Utilisation d'une estimation.")
+        return generer_fret_simule()[:1]  # Juste la dernière valeur simulée
+        
+    except Exception as e:
+        st.warning(f"⚠️ Erreur BDI scraping : {str(e)[:80]}")
+        return generer_fret_simule()[:1]
 # ==============================
 # RAG AVEC ACTUALITÉS RÉELLES
 # ==============================
