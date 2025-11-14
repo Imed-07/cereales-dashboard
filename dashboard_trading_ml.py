@@ -176,7 +176,7 @@ def charger_donnees_investpy(actif):
     if actif == "Fret maritime":
         return scrape_bdi_index()  # ← Utilise le scraping BDI
     elif actif in ["Blé tendre", "Maïs", "Soja"]:
-        return charger_donnees_usda(actif)
+        return charger_prix_usda_api(actif)
     else:
         return generer_donnees_fallback(actif)  
 # ==============================
