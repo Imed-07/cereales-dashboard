@@ -118,18 +118,27 @@ def scrape_bdi_index():
     except Exception as e:
         st.warning(f"⚠️ Erreur BDI scraping : {str(e)[:80]}")
         return generer_fret_simule()[:1]
-        
-        @st.cache_data(ttl=86400)  # Mise en cache pendant 24h
+
+# ==============================
+# FONCTION USDA API
+# ==============================
+
 def charger_prix_usda_api(actif, api_key=None):
     if not api_key:
         api_key = os.getenv("USDA_API_KEY", None)
     if not api_key:
         st.warning("⚠️ Clé USDA API manquante. Données simulées utilisées.")
         return generer_donnees_fallback(actif)
-    commodity_map = {"Blé tendre": "WHEAT", "Maïs": "CORN", "Soja": "SOYBEANS"}
+    
+    commodity_map = {
+        "Blé tendre": "WHEAT",
+        "Maïs": "CORN",
+        "Soja": "SOYBEANS"
+    }
     commodity = commodity_map.get(actif)
     if not commodity:
         return generer_donnees_fallback(actif)
+    
     try:
         url = "https://quickstats.nass.usda.gov/api/api_GET/"
         params = {
@@ -143,6 +152,7 @@ def charger_prix_usda_api(actif, api_key=None):
         }
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
+        
         if data.get("data"):
             latest = data["data"][0]
             prix = float(latest["Value"])
@@ -158,6 +168,7 @@ def charger_prix_usda_api(actif, api_key=None):
         else:
             st.warning(f"⚠️ Aucune donnée USDA trouvée pour {actif}.")
             return generer_donnees_fallback(actif)
+            
     except Exception as e:
         st.warning(f"⚠️ Erreur API USDA : {str(e)[:80]}")
         return generer_donnees_fallback(actif)
