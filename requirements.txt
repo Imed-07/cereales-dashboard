@@ -1,11 +1,9 @@
 streamlit==1.39.0
 pandas==2.2.2
 numpy==1.26.4
-xgboost==2.0.3
-investpy==1.0.7
+scikit-learn==1.5.1
 requests
 beautifulsoup4
-google-generativeai
 lxml
 google-generativeai
-xgboost==2.0.3
+investpy
