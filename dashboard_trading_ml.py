@@ -119,6 +119,7 @@ def scrape_bdi_index():
         st.warning(f"⚠️ Erreur BDI scraping : {str(e)[:80]}")
         return generer_fret_simule()[:1]
         @st.cache_data(ttl=86400)  # Mise en cache pendant 24h
+
 def charger_prix_usda_api(actif, api_key=None):
     """
     Récupère le dernier prix depuis l'API officielle USDA NASS Quick Stats.
@@ -170,15 +171,6 @@ def charger_prix_usda_api(actif, api_key=None):
             
     except Exception as e:
         st.warning(f"⚠️ Erreur API USDA : {str(e)[:80]}")
-        return generer_donnees_fallback(actif)
-
-# Fonction principale de chargement
-def charger_donnees_investpy(actif):
-    if actif == "Fret maritime":
-        return scrape_bdi_index()
-    elif actif in ["Blé tendre", "Maïs", "Soja"]:
-        return charger_prix_usda_api(actif)  # ← utilise la nouvelle fonction
-    else:
         return generer_donnees_fallback(actif)
 def charger_donnees_investpy(actif):
     if actif == "Fret maritime":
