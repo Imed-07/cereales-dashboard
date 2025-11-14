@@ -119,7 +119,6 @@ def scrape_bdi_index():
         st.warning(f"⚠️ Erreur BDI scraping : {str(e)[:80]}")
         return generer_fret_simule()[:1]
         @st.cache_data(ttl=86400)  # Mise en cache pendant 24h
-
 def charger_prix_usda_api(actif, api_key=None):
     if not api_key:
         api_key = os.getenv("USDA_API_KEY", None)
