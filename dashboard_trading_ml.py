@@ -119,65 +119,66 @@ def scrape_bdi_index():
         st.warning(f"⚠️ Erreur BDI scraping : {str(e)[:80]}")
         return generer_fret_simule()[:1]
         @st.cache_data(ttl=86400)  # Mise en cache pendant 24h
-def charger_donnees_usda(actif):
+def charger_prix_usda_api(actif, api_key=None):
     """
-    Charge les prix depuis le dernier rapport hebdomadaire USDA (CSV public).
+    Récupère le dernier prix depuis l'API officielle USDA NASS Quick Stats.
     """
-    mapping_usda = {
-        "Blé tendre": "Wheat",
-        "Maïs": "Corn",
-        "Soja": "Soybeans"
+    if not api_key:
+        api_key = os.getenv("USDA_API_KEY", None)
+    if not api_key:
+        st.warning("⚠️ Clé USDA API manquante. Données simulées utilisées.")
+        return generer_donnees_fallback(actif)
+    
+    commodity_map = {
+        "Blé tendre": "WHEAT",
+        "Maïs": "CORN",
+        "Soja": "SOYBEANS"
     }
-    usda_commodity = mapping_usda.get(actif)
-    if not usda_commodity:
+    commodity = commodity_map.get(actif)
+    if not commodity:
+        return generer_donnees_fallback(actif)
+    
+    try:
+        url = "https://quickstats.nass.usda.gov/api/api_GET/"
+        params = {
+            "key": api_key,
+            "commodity_desc": commodity,
+            "statisticcat_desc": "PRICE",
+            "prodn_practice_desc": "ALL PRODUCTION PRACTICES",
+            "freq_desc": "WEEKLY",
+            "reference_period_desc": "WEEK",
+            "format": "JSON"
+        }
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        if data.get("data"):
+            latest = data["data"][0]
+            prix = float(latest["Value"])
+            np.random.seed(42)
+            jours = 60
+            dates = [datetime.today() - timedelta(days=x) for x in range(jours)][::-1]
+            prix_list = [max(prix + np.random.normal(0, 5), prix * 0.8) for _ in range(jours)]
+            return pd.DataFrame({
+                "Date": [d.strftime("%Y-%m-%d") for d in dates],
+                "Prix": np.round(prix_list, 2),
+                "Volume": np.random.randint(10000, 20000, jours)
+            })
+        else:
+            st.warning(f"⚠️ Aucune donnée USDA trouvée pour {actif}.")
+            return generer_donnees_fallback(actif)
+            
+    except Exception as e:
+        st.warning(f"⚠️ Erreur API USDA : {str(e)[:80]}")
         return generer_donnees_fallback(actif)
 
-    try:
-        # URL officielle du rapport hebdomadaire (exportations de céréales)
-        url = "https://www.nass.usda.gov/Market_News/Grain_Market_Summary/GMS_Weekly_Export_Sales.csv"
-        df = pd.read_csv(url)
-        
-        # Filtrer la dernière ligne pour le produit demandé
-        df['Commodity'] = df['Commodity'].astype(str)
-        df_filtered = df[df['Commodity'].str.contains(usda_commodity, case=False, na=False)]
-        
-        if not df_filtered.empty:
-            last_row = df_filtered.iloc[-1]
-            # Ajustez le nom de la colonne selon le CSV réel — ici on suppose "Price"
-            if 'Price' in last_row and pd.notna(last_row['Price']):
-                prix_usda = float(last_row['Price'])
-            else:
-                # Si "Price" n'existe pas, utilisez une colonne alternative ou une estimation
-                prix_usda = {
-                    "Blé tendre": 270,
-                    "Maïs": 190,
-                    "Soja": 480
-                }.get(actif, 250)
-        else:
-            # Pas de données cette semaine → estimation
-            prix_usda = {
-                "Blé tendre": 270,
-                "Maïs": 190,
-                "Soja": 480
-            }.get(actif, 250)
-
-        # Créer un historique de 60 jours centré sur cette valeur
-        np.random.seed(42)
-        jours = 60
-        dates = [datetime.today() - timedelta(days=x) for x in range(jours)][::-1]
-        prix = []
-        for i in range(jours):
-            trend = prix_usda * (1 + 0.0003 * i)
-            noise = np.random.normal(0, 6)
-            prix.append(max(trend + noise, prix_usda * 0.85))
-        return pd.DataFrame({
-            "Date": [d.strftime("%Y-%m-%d") for d in dates],
-            "Prix": np.round(prix, 2),
-            "Volume": np.random.randint(10000, 20000, jours)
-        })
-
-    except Exception as e:
-        st.warning(f"⚠️ Données USDA indisponibles pour {actif}. Données simulées.")
+# Fonction principale de chargement
+def charger_donnees_investpy(actif):
+    if actif == "Fret maritime":
+        return scrape_bdi_index()
+    elif actif in ["Blé tendre", "Maïs", "Soja"]:
+        return charger_prix_usda_api(actif)  # ← utilise la nouvelle fonction
+    else:
         return generer_donnees_fallback(actif)
 def charger_donnees_investpy(actif):
     if actif == "Fret maritime":
