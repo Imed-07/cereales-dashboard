@@ -1,3 +1,5 @@
+# dashboard_trading_ml.py
+# Version corrigée : gestion feedparser optionnel, footer fix, retries réseau, UI ergonomique
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -17,7 +19,12 @@ except Exception:
 from sklearn.ensemble import RandomForestRegressor
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import feedparser
+
+# feedparser optional (avoid crash if not installed)
+try:
+    import feedparser
+except Exception:
+    feedparser = None
 
 # ==============================
 # LOGGING
@@ -52,7 +59,7 @@ st.set_page_config(
 )
 
 # ==============================
-# STYLES (clean, professional)
+# CSS / STYLES
 # ==============================
 st.markdown(
     """
@@ -101,7 +108,7 @@ def make_session(retries: int = 3, backoff: float = 0.4) -> requests.Session:
 session = make_session()
 
 # ==============================
-# SIMULATED DATA FALLBACKS
+# FALLBACK DATA GENERATORS
 # ==============================
 @st.cache_data(ttl=3600)
 def generer_fret_simule() -> pd.DataFrame:
@@ -119,6 +126,7 @@ def generer_fret_simule() -> pd.DataFrame:
         "Prix": np.round(prix, 2),
         "Volume": np.random.randint(5000, 12000, jours)
     })
+
 
 def generer_donnees_fallback(actif: str) -> pd.DataFrame:
     np.random.seed(42)
@@ -139,9 +147,10 @@ def generer_donnees_fallback(actif: str) -> pd.DataFrame:
     })
 
 # ==============================
-# DATA SOURCES (BDI & USDA)
+# DATA SOURCES
 # ==============================
 def scrape_bdi_index() -> pd.DataFrame:
+    """Scrape BDI page, validate candidate number and fallback to simulation."""
     url = "https://www.balticexchange.com/en/market-data/main-indices/dry.html"
     try:
         resp = session.get(url, timeout=10)
@@ -155,6 +164,7 @@ def scrape_bdi_index() -> pd.DataFrame:
             raw = m.group(1).replace(",", "")
             try:
                 val = float(raw)
+                # basic sanity check
                 if 100 < val < 20000:
                     return pd.DataFrame({
                         "Date": [datetime.today().strftime("%Y-%m-%d")],
@@ -162,13 +172,14 @@ def scrape_bdi_index() -> pd.DataFrame:
                         "Volume": [0]
                     })
             except Exception:
-                logger.debug("BDI parse failed")
+                logger.debug("BDI parse matched but conversion failed")
         st.warning("⚠️ Impossible de récupérer le BDI en temps réel. Utilisation d'une estimation locale.")
         return generer_fret_simule()[:1]
     except Exception as e:
-        logger.exception("Erreur BDI")
+        logger.exception("Erreur lors du scraping BDI")
         st.warning(f"⚠️ Erreur BDI scraping : {str(e)[:120]}")
         return generer_fret_simule()[:1]
+
 
 def charger_prix_usda_api(actif: str, api_key: Optional[str] = None) -> pd.DataFrame:
     if not api_key:
@@ -211,9 +222,10 @@ def charger_prix_usda_api(actif: str, api_key: Optional[str] = None) -> pd.DataF
             "Volume": np.random.randint(10000, 20000, jours)
         })
     except Exception as e:
-        logger.exception("Erreur USDA")
+        logger.exception("Erreur API USDA")
         st.warning(f"⚠️ Erreur API USDA : {str(e)[:120]}")
         return generer_donnees_fallback(actif)
+
 
 def charger_donnees_investpy(actif: str) -> pd.DataFrame:
     if actif == "Fret maritime":
@@ -224,7 +236,7 @@ def charger_donnees_investpy(actif: str) -> pd.DataFrame:
         return generer_donnees_fallback(actif)
 
 # ==============================
-# NEWS (RSS via feedparser) and RAG
+# NEWS / RAG - robust to missing feedparser
 # ==============================
 @st.cache_data(ttl=7200)
 def recuperer_actualites_reelles(actif: str) -> List[str]:
@@ -234,26 +246,43 @@ def recuperer_actualites_reelles(actif: str) -> List[str]:
         elif actif == "Maïs":
             url = "https://www.farmprogress.com/rss.xml"
         elif actif == "Fret maritime":
+            # Baltic Exchange doesn't always provide RSS; use general feeds
             url = "https://www.balticexchange.com/en/news-and-events/news.html"
         else:
             url = "https://www.agweb.com/rss"
-        feed = feedparser.parse(url)
-        entries = feed.entries or []
+
+        entries = []
+        # prefer feedparser if available
+        if feedparser is not None:
+            try:
+                feed = feedparser.parse(url)
+                entries = feed.entries or []
+            except Exception:
+                entries = []
+
         if entries:
             return [e.title[:120] + "..." for e in entries[:3]]
-        resp = session.get(url, timeout=8)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.content, "html.parser")
-        titles = [t.get_text().strip() for t in soup.find_all(["h1", "h2", "h3", "a"])][:3]
-        if titles:
-            return [t[:120] + "..." for t in titles]
+
+        # fallback to simple HTML scraping
+        try:
+            resp = session.get(url, timeout=8)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.content, "html.parser")
+            titles = [t.get_text().strip() for t in soup.find_all(["h1", "h2", "h3", "a"])][:3]
+            if titles:
+                return [t[:120] + "..." for t in titles]
+        except Exception:
+            # swallow and fallback to generic messages below
+            logger.debug("HTML news fallback failed for %s", url)
     except Exception as e:
         logger.debug("Actualités fetch failed: %s", e)
+
     return [
         "Marché stable avec faible volatilité.",
         "Aucun événement majeur rapporté.",
         "Tendances techniques neutres."
     ]
+
 
 def generer_recommandation_rag(prix: float, prevision: float, actualites: List[str]) -> str:
     actualites_text = " ".join(actualites[:2])
@@ -267,6 +296,7 @@ def generer_recommandation_rag(prix: float, prevision: float, actualites: List[s
                 "Donne une recommandation concise en français (max 3 phrases) pour un trader professionnel. "
                 "Mentionne les risques et opportunités."
             )
+            # Keep call in try/except — library versions vary
             model = genai.GenerativeModel('gemini-1.5-flash')
             response = model.generate_content(prompt, request_options={"timeout": 10})
             return response.text
@@ -285,7 +315,7 @@ def generer_recommandation_rag(prix: float, prevision: float, actualites: List[s
     return rec
 
 # ==============================
-# FEATURE PREPARATION
+# FEATURES
 # ==============================
 def preparer_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -313,7 +343,6 @@ if st.sidebar.button("Réinitialiser cache / redémarrer"):
     st.cache_data.clear()
     st.experimental_rerun()
 
-# optional dark mode tweaks
 if dark_mode:
     st.markdown(
         """
@@ -334,7 +363,7 @@ with header_left:
 with header_right:
     st.markdown(f"<div class='small muted'>{datetime.now().strftime('%d/%m/%Y %H:%M')}</div>", unsafe_allow_html=True)
 
-# Initialize session flags
+# session flags
 if "training" not in st.session_state:
     st.session_state["training"] = False
 
@@ -344,18 +373,18 @@ if "training" not in st.session_state:
 with st.spinner("Chargement des données..."):
     df_hist = charger_donnees_investpy(actif)
 
+# update session price every run (avoid stale values)
 prix_actuel = float(df_hist["Prix"].iloc[-1])
 st.session_state["prix_actuel"] = prix_actuel
 volatilite = float(df_hist["Prix"].std())
 
 # ==============================
-# TABS: Overview / Prévisions / Analyses / Paramètres
+# TABS (clean UX)
 # ==============================
 tab_overview, tab_pred, tab_rag, tab_settings = st.tabs(["Overview", "Prévisions", "Analyses", "Paramètres"])
 
 with tab_overview:
     st.markdown("### Vue d'ensemble")
-    # KPI strip
     c1, c2, c3, c4 = st.columns([1.5, 1, 1, 1])
     with c1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -380,7 +409,6 @@ with tab_overview:
     df_plot["Date"] = pd.to_datetime(df_plot["Date"])
     st.line_chart(df_plot.set_index("Date")["Prix"], use_container_width=True)
 
-    # Recent news preview
     st.markdown("#### Actualités récentes")
     news = recuperer_actualites_reelles(actif)
     for n in news:
@@ -404,7 +432,7 @@ with tab_pred:
                         model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1)
                         model.fit(X, y)
 
-                        # compute residual std for simple CI band
+                        # residual std for a simple CI
                         preds_train = model.predict(X)
                         resid_std = float(np.std(y - preds_train))
 
@@ -435,7 +463,6 @@ with tab_pred:
                         st.session_state["training"] = False
 
                         st.success("Prévision générée")
-                        # show chart with band: combine history + pred with upper/lower
                         combined = pd.concat([df_plot.set_index("Date")[["Prix"]], df_pred.set_index("Date")[["Prix", "Upper", "Lower"]]])
                         combined.index = pd.to_datetime(combined.index)
                         st.line_chart(combined[["Prix", "Upper", "Lower"]], use_container_width=True)
@@ -451,10 +478,9 @@ with tab_pred:
         st.markdown("Paramètres du modèle")
         st.markdown(f"- n_estimators: **{n_estimators}**")
         st.markdown(f"- max_depth: **{max_depth}**")
-        st.markdown(f"- Horizon: **15 jours**")
+        st.markdown("- Horizon: **15 jours**")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # If predictions exist show summary card
     if st.session_state.get("df_pred") is not None:
         st.markdown("#### Résumé rapide")
         df_pred = st.session_state["df_pred"]
