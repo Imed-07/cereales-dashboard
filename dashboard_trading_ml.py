@@ -513,4 +513,4 @@ with fcol1:
     st.caption("Données: Investpy / USDA / Baltic Exchange (simulations si indisponibles) • Modèle: RandomForest")
     st.caption("Interface modernisée • UX optimisée pour traders et analystes")
 with fcol2:
-    st.markdown('<div class="pro-badge">Contact: vous@agripredict.com</div>', unsafe_allow_html=True)v>', unsafe_allow_html=True)
+    st.markdown('<div class="pro-badge">Contact: vous@agripredict.com</div>', unsafe_allow_html=True)
